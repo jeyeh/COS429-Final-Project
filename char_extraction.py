@@ -15,8 +15,8 @@ def plot_list(lst):
     plt.show()
     
     
-""" returns list of text lines from a grayscale image"""    
-def get_line_boxes(grayed_image,
+""" returns list of text lines from a grayscale image with fixed default params"""    
+def __get_fixed_line_contours(grayed_image,
                   AREA_THRESHOLD=600,
                   GAUSSIAN_BLUR_KERNEL=(5,5),
                   DILATION_KERNEL_SIZE=(7,1),
@@ -80,12 +80,59 @@ def get_line_boxes(grayed_image,
         ordered_list.append(lines[minYIndex])
         y_list[minYIndex] = 10000
         
-    assert len(lines) == len(contours)
+    assert len(lines) == len(good_contours)
     return ordered_list, thresh, dilate, image_with_boxes, good_contours
 
 
-"""reprocess image for line granularity
-    takes the grayscale image and contours returned by get_line_boxes()"""
+'''gets the line contours using a dynamically determined dilation kernel size
+ returns (lines, thresholded image, dilated image, image_w_boxes, contours) if
+ a good kernel found, otherwise returns all None -> examine the output
+ before proceeding
+ don't use the lines from this function, pass the contours to get_lines()'''
+def get_adaptive_line_contours(img):
+    line_dilation_kernel_sizes = [3, 5, 7, 9, 11, 13, 15]
+
+    all_num_lines = []
+    best_stddev = None
+    best_kernel = None
+    best_num_lines = None
+    for l in line_dilation_kernel_sizes:
+        _, _, _, _, contours = __get_fixed_line_contours(img, DILATION_KERNEL_SIZE=(l,1))
+        lines = get_lines(img, contours)
+        
+        num_lines = len(lines)
+        all_num_lines.append(num_lines)
+        
+        heights = []
+        for line in lines:
+            s = line.shape
+            heights.append(s[0])
+
+        stddev = np.std(heights)
+        if best_stddev is None:
+            best_stddev = stddev
+            best_kernel = l
+            best_num_lines = num_lines
+        elif stddev <= best_stddev: # take the smallest stddev in line height, preferring larger kernels
+            best_stddev = stddev
+            best_kernel = l
+            best_num_lines = num_lines
+                    
+    # find the best one
+    med = np.median(all_num_lines)
+    mod = max(all_num_lines, key = all_num_lines.count)
+    
+    if 0.9*med <= best_num_lines <= 1.1*med or 0.9*mod <= best_num_lines <= 1.1*mod:
+        print(f'best found! kernel: ({best_kernel}, 1)')
+        lines, thr, dil, img_w_boxes, contours = __get_fixed_line_contours(img, DILATION_KERNEL_SIZE=(best_kernel,1))
+        return lines, thr, dil, img_w_boxes, contours
+    else:
+        return None, None, None, None, None # did not find good segementation
+
+
+"""reprocess image for word granularity
+    takes the grayscale image and contours returned by get_adaptive_line_contours()
+    returns list of 3D line images to be used in get_adaptive_words()"""
 def get_lines(grayed_image, contours,
              GAUSSIAN_BLUR_KERNEL=(3,3),
              THRESH_NEIGHBORHOOD_SIZE=3,
@@ -120,8 +167,47 @@ def get_lines(grayed_image, contours,
     return ordered_list #, blur, thresh, clean_image
 
 
+'''adaptively segments a list of lines from a page into words using
+dynamically determined word dilation kernel
+returns a list of all words on the page (2D and binary images)'''
+def get_adaptive_words(lines_of_page):
+    word_dilation_kernel_sizes = [3, 4, 5, 6]
+
+    best_stddev = None
+    best_kernel = None
+    best_num_lines = None
+    for w1 in word_dilation_kernel_sizes:
+            for w2 in word_dilation_kernel_sizes: 
+                all_words = []
+                heights = []
+                widths = []
+                for line in lines_of_page:
+                    word_list, thresh, _, dilate = __get_words(line, WORD_DILATION_KERNEL_SIZE=(w1, w2))
+                    all_words.extend(word_list)
+                    heights.extend([w.shape[0] for w in word_list])
+                    widths.extend([w.shape[1] for w in word_list])
+                    
+                stddev_h = np.std(heights)
+                
+                if best_stddev is None:
+                    best_stddev = stddev_h
+                    best_kernel = (w1, w2)
+                elif stddev_h <= best_stddev: # take the smallest stddev in line height
+                    best_stddev = stddev_h
+                    best_kernel = (w1, w2)
+
+    all_words = []
+    for line in lines_of_page:
+        word_list, _, _, _ = __get_words(line, WORD_DILATION_KERNEL_SIZE=best_kernel)
+        all_words.extend(word_list)
+    return all_words
+
+
 """segments and returns list of words from the given line of text"""
-def get_words(line, WORD_AREA_THRESHOLD=1, WORD_DILATION_KERNEL_SIZE=(3, 3)):
+def __get_words(line, WORD_AREA_THRESHOLD=20,
+              WORD_DILATION_KERNEL_SIZE=(4, 3),
+             MIN_HEIGHT=5,
+                  MIN_WIDTH=5):
 
     image_with_boxes = line.copy()
     gray = cv2.cvtColor(line, cv2.COLOR_BGR2GRAY)
@@ -140,10 +226,15 @@ def get_words(line, WORD_AREA_THRESHOLD=1, WORD_DILATION_KERNEL_SIZE=(3, 3)):
     x_list = []
     for c in cnts:
         area = cv2.contourArea(c)
-        # maybe add an area threshold back in
+        if area < WORD_AREA_THRESHOLD:
+            continue
+            
         x,y,w,h = cv2.boundingRect(c)
+        if w < MIN_WIDTH or h < MIN_HEIGHT:
+            continue
+            
         cv2.rectangle(image_with_boxes, (x, y), (x + w, y + h), (36,255,12), 1) 
-        ROI = line[y:y+h, x:x+w]
+        ROI = gray[y:y+h, x:x+w]
         x_list.append(x)
         word_list.append(ROI)
 
