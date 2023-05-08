@@ -163,8 +163,11 @@ def get_adaptive_line_contours(img):
         if 0.9*med <= num_lines <= 1.1*med or 0.9*mod <= num_lines <= 1.1*mod:
             lines, thr, dil, img_w_boxes, contours = __get_fixed_line_contours(img, DILATION_KERNEL_SIZE=(k,1))
             return lines, thr, dil, img_w_boxes, contours
+      
+    # default case
+    lines, thr, dil, img_w_boxes, contours = __get_fixed_line_contours(img, DILATION_KERNEL_SIZE=(9,1))
+    return lines, thr, dil, img_w_boxes, contours
     
-    return None, None, None, None, None # no segmentation found
 
 
 """reprocess image for word granularity
