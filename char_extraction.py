@@ -89,7 +89,7 @@ def __get_fixed_line_contours(grayed_image,
  a good kernel found, otherwise returns all None -> examine the output
  before proceeding
  don't use the lines from this function, pass the contours to get_lines()'''
-def get_adaptive_line_contours(img):
+def old_get_adaptive_line_contours(img):
     line_dilation_kernel_sizes = [3, 5, 7, 9, 11, 13, 15]
 
     all_num_lines = []
@@ -123,11 +123,48 @@ def get_adaptive_line_contours(img):
     mod = max(all_num_lines, key = all_num_lines.count)
     
     if 0.9*med <= best_num_lines <= 1.1*med or 0.9*mod <= best_num_lines <= 1.1*mod:
-        print(f'best found! kernel: ({best_kernel}, 1)')
         lines, thr, dil, img_w_boxes, contours = __get_fixed_line_contours(img, DILATION_KERNEL_SIZE=(best_kernel,1))
         return lines, thr, dil, img_w_boxes, contours
     else:
         return None, None, None, None, None # did not find good segementation
+    
+
+# try different params
+def get_adaptive_line_contours(img):
+    line_dilation_kernel_sizes = [3, 5, 7, 9, 11, 13, 15]
+    size_to_num_lines = dict()
+    size_to_height_stddev = dict()
+    all_num_lines = []
+    
+    for k in line_dilation_kernel_sizes:
+        lines, thresh, dilate, _, contours = __get_fixed_line_contours(img, DILATION_KERNEL_SIZE=(k,1))
+        lines = get_lines(img, contours)
+        num_lines = len(lines)
+        size_to_num_lines[k] = num_lines
+        all_num_lines.append(num_lines)
+        
+        heights = []
+        for line in lines:
+            s = line.shape
+            heights.append(s[0])
+            
+        stddev = np.std(heights)
+        size_to_height_stddev[k] = stddev
+        
+    # find the best one
+    med = np.median(all_num_lines)
+    mod = max(all_num_lines, key = all_num_lines.count)
+    
+    # sort kernels by increasing stddev of line heights
+    ks = [l for l, val in sorted(size_to_height_stddev.items(), key=lambda item: item[1])]
+    
+    for k in ks:
+        num_lines = size_to_num_lines[k]
+        if 0.9*med <= num_lines <= 1.1*med or 0.9*mod <= num_lines <= 1.1*mod:
+            lines, thr, dil, img_w_boxes, contours = __get_fixed_line_contours(img, DILATION_KERNEL_SIZE=(k,1))
+            return lines, thr, dil, img_w_boxes, contours
+    
+    return None, None, None, None, None # no segmentation found
 
 
 """reprocess image for word granularity
